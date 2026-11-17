@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reading a Head-Up Display</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu:ital,wght@0,400;0,500;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout idea: one dark instrument-panel world; a long reading column, with the live HUD as the centrepiece. */
+:root{
+  --bg:#000; --page:#2A2A2A; --panel:#333333; --panel2:#3D3D3D; --line:#505050;
+  --text:#F3F3F3; --muted:#BDBDBD; --head:#C08A4A; --accent:#4DE8F4; --warn:#FFB454;
+  --display:"Ubuntu","Segoe UI",system-ui,sans-serif;
+  --body:"Ubuntu","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);font-size:16px;line-height:1.75}
+#stars{position:fixed;inset:0;width:100%;height:100%;z-index:0}
+.wrap{position:relative;z-index:1;max-width:1140px;margin:clamp(0px,5vw,68px) auto;padding:44px clamp(18px,5vw,64px) 72px;background:var(--page)}
+.sitebar{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;margin-bottom:56px}
+.brand{font-weight:700;font-size:30px;color:var(--head);text-decoration:none;letter-spacing:.03em}
+.tagline{font-style:italic;font-size:15px}
+a{color:var(--text)}
+h1,h2,h3{font-family:var(--display);font-weight:500;color:var(--head);text-transform:lowercase;text-wrap:balance;margin:0}
+h1{font-size:clamp(40px,6vw,60px);line-height:1.1}
+h2{font-size:clamp(28px,4vw,36px);margin-top:64px;padding-top:22px;border-top:1px solid var(--line)}
+h3{font-size:22px;margin-bottom:6px}
+p{margin:12px 0;max-width:68ch}
+.lede{font-size:18px;color:var(--muted);max-width:62ch}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--head);margin-bottom:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px 20px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media (max-width:820px){.grid2,.grid3{grid-template-columns:1fr}}
+ul,ol{max-width:68ch;padding-left:22px}
+li{margin:6px 0}
+b,strong{font-weight:600}
+code,.mono{font-family:var(--mono);font-size:.9em;color:var(--head)}
+.eq{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--head);border-radius:6px;padding:14px 18px;margin:16px 0;max-width:760px}
+.eq math{font-size:1.45em;margin:8px 0}
+.eq .says{color:var(--muted);font-size:14px;margin:6px 0 0}
+.eq .name{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--head)}
+svg text{font-family:var(--mono)}
+.diagram{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px;overflow-x:auto}
+.diagram svg{display:block;width:100%;min-width:560px;height:auto}
+button{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:7px 12px;cursor:pointer}
+button:hover{border-color:var(--head)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--head);outline-offset:2px}
+button.on{background:#4A3A26;border-color:var(--head);color:#F3D9B4}
+
+/* Live HUD */
+.hudgrid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr);gap:18px;align-items:start;margin-top:20px}
+@media (max-width:900px){.hudgrid{grid-template-columns:1fr}}
+.hudbox{background:#05080C;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.hudbox svg{display:block;width:100%;height:auto}
+.hit{fill:transparent;stroke:none;cursor:pointer;pointer-events:all}
+.hit:hover{fill:rgba(77,232,244,.07)}
+.hit.sel{fill:rgba(77,232,244,.12);stroke:var(--accent);stroke-width:1;stroke-dasharray:4 3}
+path.hit{fill:none;stroke:transparent;stroke-width:26;pointer-events:stroke}
+path.hit.sel{stroke:rgba(77,232,244,.2)}
+.hs{stroke:var(--accent);fill:none;stroke-width:1.7;stroke-linecap:round}
+.ht{fill:var(--accent);font-size:13px}
+.hb{fill:rgba(5,8,12,.88);stroke:var(--accent);stroke-width:1.4}
+.badge{display:none;pointer-events:none}
+.showbadges .badge{display:block}
+.badge circle{fill:var(--warn);stroke:#05080C;stroke-width:1.5}
+.badge text{fill:#05080C;font-size:12px;font-weight:600;text-anchor:middle}
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px 18px;margin-top:14px}
+.ctl label{display:flex;justify-content:space-between;font-size:14px;color:var(--muted)}
+.ctl output{font-family:var(--mono);color:var(--text)}
+input[type=range]{width:100%;accent-color:var(--accent);margin:2px 0}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:center}
+.row label{display:flex;gap:6px;align-items:center;font-size:14px;color:var(--muted)}
+.legend{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:14px}
+.legend button{display:flex;gap:8px;align-items:center;text-align:left;padding:6px 9px;font-size:14px}
+.legend .n{flex:none;width:20px;height:20px;border-radius:50%;background:var(--warn);color:#05080C;font-weight:600;font-size:12px;display:grid;place-items:center}
+.info h3{margin-top:0}
+.info dt{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-top:12px}
+.info dd{margin:2px 0 0}
+.live{margin-top:14px;font-family:var(--mono);font-size:13px;line-height:1.9;color:var(--text)}
+.live span{color:var(--accent)}
+table{border-collapse:collapse;width:100%;font-size:15px}
+th,td{border-bottom:1px solid var(--line);padding:10px 12px;text-align:left;vertical-align:top}
+th{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+.tablewrap{overflow-x:auto}
+.tag{display:inline-block;font-family:var(--mono);font-size:12px;padding:1px 8px;border-radius:99px;border:1px solid}
+.tag.yes{color:#5EE6A0;border-color:#5EE6A0}.tag.no{color:#FF8A7A;border-color:#FF8A7A}.tag.sub{color:var(--warn);border-color:var(--warn)}
+.screen{position:relative;height:70px;border:1px solid var(--line);border-radius:6px;background:linear-gradient(#10243a 50%,#26281f 50%);overflow:hidden}
+.screen .mk{position:absolute;top:50%;width:18px;height:18px;margin:-9px 0 0 -9px;border:2px solid var(--accent);border-radius:50%;background:transparent}
+.screen .mk::before,.screen .mk::after{content:"";position:absolute;background:var(--accent)}
+.screen .mk::before{left:-8px;right:-8px;top:6px;height:2px}.screen .mk::after{left:6px;top:-7px;width:2px;height:7px}
+.status{font-family:var(--mono);font-size:13px;margin-top:8px;min-height:2.6em}
+.callout{border-left:3px solid var(--warn);background:var(--panel);padding:12px 16px;border-radius:0 6px 6px 0;max-width:760px;margin:16px 0}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas>
+<div class="wrap">
+
+<div class="sitebar"><a class="brand" href="https://sebakazkaz.wordpress.com/">seba kazkaz</a><span class="tagline">Aerospace Engineer | ITU</span></div>
+
+<header>
+  <div class="kicker">Flight displays, explained</div>
+  <h1>Reading a Head-Up Display</h1>
+  <p class="lede">What a HUD is, how every symbol on it works, how to read one at a glance, and which camera of your simulator should carry it.</p>
+</header>
+
+<section class="card" style="margin-top:28px">
+  <h3>The short answers</h3>
+  <ul>
+    <li><b>How it works:</b> a small display is placed at the focal distance of a lens. The lens makes the light travel in parallel lines, a sheet of angled glass (the combiner) reflects it to the pilot's eye, and the picture appears to float far out in front of the aircraft. The pilot sees the real world and the symbols together, with no refocusing.</li>
+    <li><b>How to read it:</b> find the <b>flight path vector</b> (the little bird). It shows where you are really going. Compare it with the horizon and the fixed cross for attitude and angle of attack, then glance at the tapes for speed, height and heading.</li>
+    <li><b>Where to put it in your sim:</b> on the <b>forward-looking camera</b>, the one fixed to the aircraft's nose. Not on the rear camera, and not as the main overlay on the gimbal. The gimbal gets its own sensor overlay. Details and a live demo are in section 3.</li>
+  </ul>
+</section>
+
+<!-- 1. OPTICS -->
+<h2>1. How a HUD works</h2>
+<p>A normal screen is a few tens of centimetres from your eyes. To read it, your eyes must focus close, then re-focus to the runway far away. That refocusing takes about a second and costs attention at the worst moment. A HUD removes it by making the symbols look as far away as the scenery.</p>
+
+<div class="diagram" role="img" aria-label="Optical layout of a head-up display: a display at the focal distance of a lens, a combiner glass that reflects parallel rays to the pilot's eye, and the outside world seen through the glass.">
+<svg viewBox="0 0 700 250" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#9AA9BC"/></marker>
+  </defs>
+  <!-- display -->
+  <rect x="448" y="14" width="44" height="12" rx="2" fill="#4DE8F4"/>
+  <text x="506" y="24" fill="#E5EBF3" font-size="12">① Display (a tiny bright screen)</text>
+  <!-- diverging rays -->
+  <g stroke="#4DE8F4" stroke-width="1.2" opacity=".8">
+    <line x1="470" y1="26" x2="445" y2="88"/><line x1="470" y1="26" x2="470" y2="88"/><line x1="470" y1="26" x2="495" y2="88"/>
+  </g>
+  <text x="504" y="62" fill="#9AA9BC" font-size="12">spreading rays</text>
+  <!-- lens -->
+  <ellipse cx="470" cy="88" rx="34" ry="6" fill="none" stroke="#E5EBF3" stroke-width="2"/>
+  <text x="514" y="92" fill="#E5EBF3" font-size="12">② Collimating lens</text>
+  <line x1="418" y1="26" x2="418" y2="88" stroke="#9AA9BC" stroke-width="1" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <text x="372" y="62" fill="#9AA9BC" font-size="12" text-anchor="end">distance f</text>
+  <!-- parallel rays down -->
+  <g stroke="#4DE8F4" stroke-width="1.2" opacity=".8">
+    <line x1="445" y1="94" x2="445" y2="155"/><line x1="470" y1="94" x2="470" y2="130"/><line x1="495" y1="94" x2="495" y2="105"/>
+  </g>
+  <!-- combiner -->
+  <line x1="436" y1="164" x2="504" y2="96" stroke="#A9D8FF" stroke-width="4" opacity=".75"/>
+  <text x="400" y="194" fill="#E5EBF3" font-size="12">③ Combiner glass: reflects the symbols,</text>
+  <text x="400" y="210" fill="#E5EBF3" font-size="12">   lets the outside world through</text>
+  <!-- reflected parallel rays to eye -->
+  <g stroke="#4DE8F4" stroke-width="1.6">
+    <line x1="445" y1="155" x2="96" y2="155" marker-end="url(#arr)"/>
+    <line x1="470" y1="130" x2="96" y2="130" marker-end="url(#arr)"/>
+    <line x1="495" y1="105" x2="96" y2="105" marker-end="url(#arr)"/>
+  </g>
+  <text x="270" y="97" fill="#4DE8F4" font-size="12" text-anchor="middle">parallel rays = the image looks infinitely far away</text>
+  <!-- eye -->
+  <circle cx="72" cy="130" r="18" fill="none" stroke="#E5EBF3" stroke-width="2"/><circle cx="76" cy="130" r="6" fill="#E5EBF3"/>
+  <text x="72" y="172" fill="#E5EBF3" font-size="12" text-anchor="middle">④ Pilot's eye</text>
+  <!-- outside world -->
+  <line x1="660" y1="142" x2="96" y2="142" stroke="#9AA9BC" stroke-width="1.2" stroke-dasharray="6 5" marker-end="url(#arr)"/>
+  <text x="660" y="236" fill="#9AA9BC" font-size="12" text-anchor="end">⑤ Real-world light (dashed) goes straight through</text>
+</svg>
+</div>
+
+<p>Two small pieces of maths explain why the image looks far away and how big the HUD window is.</p>
+
+<div class="eq">
+  <div class="name">The lens equation</div>
+  <math display="block" aria-label="s prime equals s times f divided by s minus f">
+    <msup><mi>s</mi><mo>′</mo></msup><mo>=</mo>
+    <mfrac><mrow><mi>s</mi><mo>·</mo><mi>f</mi></mrow><mrow><mi>s</mi><mo>−</mo><mi>f</mi></mrow></mfrac>
+  </math>
+  <p class="says"><b>s</b> is how far the display sits from the lens, <b>f</b> is the lens's focal length, and <b>s′</b> is where the eye thinks the picture is. Put the display exactly at <b>s = f</b> and the bottom of the fraction becomes zero, so <b>s′ → ∞</b>. That is collimation: the picture appears infinitely far away.</p>
+</div>
+
+<div class="eq">
+  <div class="name">Size of the HUD window</div>
+  <math display="block" aria-label="Field of view equals two arctangent of w over two f">
+    <mi>FOV</mi><mo>=</mo><mn>2</mn><mo>·</mo><mi>arctan</mi>
+    <mo>(</mo><mfrac><mi>w</mi><mrow><mn>2</mn><mi>f</mi></mrow></mfrac><mo>)</mo>
+  </math>
+  <p class="says"><b>w</b> is the width of the lens opening. A wider lens or a shorter focal length gives a bigger window, but bigger optics are heavier and harder to fit in a cockpit. This is why real HUDs show only a window of roughly 20 to 30 degrees, not the whole canopy.</p>
+</div>
+
+<h3 style="margin-top:28px">Three words you will see a lot</h3>
+<div class="grid3">
+  <div class="card"><b>Collimated</b><p>Light rays made parallel, so the image seems very far away. This is the trick above.</p></div>
+  <div class="card"><b>Conformal</b><p>A symbol that sits on top of the real thing it describes. The horizon line lies on the real horizon. The flight path symbol lies on the real spot you are heading toward. A conformal symbol is only correct if the camera looks the way the aircraft's nose looks.</p></div>
+  <div class="card"><b>Combiner</b><p>The clear angled glass that adds the projected symbols to the real view. In a game it is simply the overlay on top of your 3D camera.</p></div>
+</div>
+
+<!-- 2. LIVE HUD -->
+<h2>2. A live HUD you can poke</h2>
+<p>Click any part of the display, or any name in the list, to see what it is and how to read it. Move the sliders to fly it. The nose angle and the flight path are separate sliders on purpose: the gap between them is the angle of attack, and that gap is the thing a flight path vector exists to show.</p>
+
+<div class="hudgrid">
+  <div>
+    <div class="hudbox" id="hudbox">
+      <svg id="hud" viewBox="0 0 640 440" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Interactive head-up display">
+        <defs>
+          <clipPath id="winClip"><rect x="0" y="0" width="640" height="440"/></clipPath>
+          <clipPath id="ladClip"><circle cx="320" cy="225" r="138"/></clipPath>
+          <clipPath id="iasClip"><rect x="40" y="150" width="100" height="150"/></clipPath>
+          <clipPath id="altClip"><rect x="500" y="150" width="100" height="150"/></clipPath>
+          <clipPath id="hdgClip"><rect x="220" y="8" width="200" height="38"/></clipPath>
+          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0B2038"/><stop offset="1" stop-color="#2C5B86"/></linearGradient>
+          <linearGradient id="gnd" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3C4A33"/><stop offset="1" stop-color="#1B2216"/></linearGradient>
+        </defs>
+
+        <!-- outside world -->
+        <g id="worldClip" clip-path="url(#winClip)">
+          <g id="worldG">
+            <g id="worldFill">
+              <rect x="-1600" y="-2400" width="3600" height="2400" fill="url(#sky)"/>
+              <rect x="-1600" y="0" width="3600" height="2400" fill="url(#gnd)"/>
+              <line x1="-1600" y1="0" x2="2000" y2="0" stroke="#8FB4D0" stroke-width="1.2" opacity=".7"/>
+            </g>
+            <g id="runway" style="display:none">
+              <polygon points="-3,-9 3,-9 26,44 -26,44" fill="#6E7378"/>
+              <line x1="0" y1="-8" x2="0" y2="40" stroke="#E8E8E8" stroke-width="1.4" stroke-dasharray="4 5"/>
+              <rect x="-7" y="-1.5" width="14" height="3" fill="#FFB454"/>
+            </g>
+          </g>
+        </g>
+        <rect x="0" y="0" width="640" height="440" fill="#000" opacity=".25" id="dim"/>
+
+        <!-- pitch ladder (rotating) -->
+        <g clip-path="url(#ladClip)"><g id="ladG"><g id="ladLines"></g></g></g>
+
+        <!-- bank scale (fixed) + pointer -->
+        <g id="bankScale"></g>
+        <polygon id="bankPtr" points="315,87 325,87 320,77" fill="var(--accent)"/>
+
+        <!-- tapes -->
+        <g clip-path="url(#iasClip)"><g id="iasTape"></g></g>
+        <g clip-path="url(#altClip)"><g id="altTape"></g></g>
+        <g clip-path="url(#hdgClip)"><g id="hdgTape"></g></g>
+        <g id="iasBox">
+          <polygon class="hb" points="50,213 110,213 118,225 110,237 50,237"/>
+          <text id="iasTxt" class="ht" x="104" y="230" text-anchor="end" font-size="15">0</text>
+        </g>
+        <g id="altBox">
+          <polygon class="hb" points="590,213 530,213 522,225 530,237 590,237"/>
+          <text id="altTxt" class="ht" x="584" y="230" text-anchor="end" font-size="15">0</text>
+        </g>
+        <polygon points="314,50 326,50 320,42" fill="var(--accent)"/>
+        <text id="hdgTxt" class="ht" x="320" y="64" text-anchor="middle" font-size="14">000</text>
+
+        <!-- side data -->
+        <text id="rdMach" class="ht" x="52" y="326">M 0.00</text>
+        <text id="rdG" class="ht" x="52" y="346">G 1.0</text>
+        <text id="rdAoa" class="ht" x="52" y="366">α 0.0</text>
+        <text id="rdVs" class="ht" x="588" y="326" text-anchor="end">VS 0</text>
+
+        <!-- boresight cross -->
+        <g class="hs" id="bore"><line x1="305" y1="225" x2="315" y2="225"/><line x1="325" y1="225" x2="335" y2="225"/><line x1="320" y1="215" x2="320" y2="221"/><line x1="320" y1="229" x2="320" y2="235"/></g>
+
+        <!-- flight path vector -->
+        <g id="fpv"><g class="hs"><circle r="7"/><line x1="-17" y1="0" x2="-7" y2="0"/><line x1="7" y1="0" x2="17" y2="0"/><line x1="0" y1="-7" x2="0" y2="-14"/></g></g>
+
+        <!-- hit areas -->
+        <circle class="hit" data-part="ladder" cx="320" cy="225" r="138"/>
+        <g id="horHitG"><rect class="hit" data-part="horizon" x="-150" y="-9" width="300" height="18"/></g>
+        <path class="hit" data-part="roll" id="rollHit"/>
+        <rect class="hit" data-part="hdg" x="214" y="6" width="212" height="62"/>
+        <rect class="hit" data-part="ias" x="44" y="148" width="96" height="154"/>
+        <rect class="hit" data-part="alt" x="500" y="148" width="96" height="154"/>
+        <rect class="hit" data-part="data" x="44" y="310" width="112" height="64"/>
+        <rect class="hit" data-part="data" x="520" y="310" width="76" height="24"/>
+        <rect class="hit" data-part="bore" x="302" y="212" width="36" height="26"/>
+        <g id="fpvHit"><rect class="hit" data-part="fpv" x="-20" y="-18" width="40" height="34"/></g>
+
+        <!-- numbered badges -->
+        <g id="badges"></g>
+      </svg>
+    </div>
+
+    <div class="row" id="presets"></div>
+    <div class="row">
+      <label><input type="checkbox" id="optBadges"> Show numbers</label>
+      <label><input type="checkbox" id="optWorld" checked> Show outside world</label>
+      <label><input type="checkbox" id="optRunway"> Show runway</label>
+    </div>
+    <div class="controls" id="controls"></div>
+  </div>
+
+  <div>
+    <div class="card info" id="info" aria-live="polite"></div>
+    <div class="legend" id="legend"></div>
+    <div class="card live" id="live" style="margin-top:14px"></div>
+  </div>
+</div>
+
+<h3 style="margin-top:36px">The maths behind the readouts</h3>
+<div class="grid2">
+  <div class="eq">
+    <div class="name">Flight path angle</div>
+    <math display="block" aria-label="gamma equals arcsine of vertical speed over airspeed">
+      <mi>γ</mi><mo>=</mo><mi>arcsin</mi><mo>(</mo>
+      <mfrac><msub><mi>V</mi><mi>vert</mi></msub><mi>V</mi></mfrac><mo>)</mo>
+    </math>
+    <p class="says">Climb or descent angle <b>γ</b> from the vertical speed <b>V<sub>vert</sub></b> and the speed <b>V</b>, both in the same units (feet per second). The bird sits <b>γ</b> degrees above or below the horizon.</p>
+  </div>
+  <div class="eq">
+    <div class="name">Angle of attack</div>
+    <math display="block" aria-label="alpha is approximately theta minus gamma">
+      <mi>α</mi><mo>≈</mo><mi>θ</mi><mo>−</mo><mi>γ</mi>
+    </math>
+    <p class="says">Nose angle <b>θ</b> minus path angle <b>γ</b>. It is the vertical gap between the fixed cross and the bird. This version assumes wings roughly level and no wind effects; it is the picture, not a sensor reading.</p>
+  </div>
+  <div class="eq">
+    <div class="name">Drift angle</div>
+    <math display="block" aria-label="beta equals chi minus psi">
+      <mi>β</mi><mo>=</mo><mi>χ</mi><mo>−</mo><mi>ψ</mi>
+    </math>
+    <p class="says">Track <b>χ</b> (where you travel over the ground) minus heading <b>ψ</b> (where the nose points). The bird moves sideways by <b>β</b> degrees. In a crosswind the nose points into the wind and the bird shows the real path.</p>
+  </div>
+  <div class="eq">
+    <div class="name">Steady level turn</div>
+    <math display="block" aria-label="load factor n equals one over cosine phi, turn rate omega equals g tangent phi over V">
+      <mi>n</mi><mo>=</mo><mfrac><mn>1</mn><mrow><mi>cos</mi><mo>&#x2061;</mo><mi>φ</mi></mrow></mfrac>
+      <mspace width="1.6em"/>
+      <mi>ω</mi><mo>=</mo><mfrac><mrow><mi>g</mi><mo>·</mo><mi>tan</mi><mo>&#x2061;</mo><mi>φ</mi></mrow><mi>V</mi></mfrac>
+    </math>
+    <p class="says">Bank <b>φ</b> in a level turn raises the G load <b>n</b> (about 1.15 G at 30°, 2 G at 60°) and sets the turn rate <b>ω</b>, where <b>g</b> = 9.81 m/s² and <b>V</b> is in m/s.</p>
+  </div>
+</div>
+
+<h3 style="margin-top:28px">How to read it, in order</h3>
+<ol>
+  <li><b>Where am I going?</b> Look at the bird, not the nose. Above the horizon line you are climbing, below you are descending, left or right of the centre you are drifting sideways.</li>
+  <li><b>Where is the nose?</b> Find the fixed cross. The distance between the cross and the horizon is your pitch. Count rungs: each rung is 5 degrees on this display.</li>
+  <li><b>How hard am I flying the wing?</b> Look at the gap between cross and bird. A bigger gap below the cross means a higher angle of attack, closer to a stall.</li>
+  <li><b>Bank.</b> The ladder tilts and the pointer slides along the arc at the top.</li>
+  <li><b>Numbers.</b> Speed on the left, height on the right, heading on top. Tapes move opposite to the change: climbing makes the altitude numbers slide down.</li>
+</ol>
+<div class="callout"><b>Check yourself:</b> choose the <i>Final approach</i> preset. The bird sits on the runway's aim point, with the cross about 8° above it. Now choose <i>Crosswind</i>. The nose points 5° off the runway, yet the bird still sits on it. That is the symbol doing its job: the path is lined up, even though the nose is not.</div>
+
+<!-- 4. SIM -->
+<h2>3. Where should the HUD go in your simulator?</h2>
+<p>The question is really: <b>which camera is allowed to show conformal symbols?</b> Conformal symbols only make sense when the camera looks along the aircraft's own forward direction, because the whole point is that they sit on the real horizon and the real flight path.</p>
+
+<div class="tablewrap card">
+<table>
+  <thead><tr><th>Camera view</th><th>Full flight HUD?</th><th>What to show instead or as well</th></tr></thead>
+  <tbody>
+    <tr><td><b>Forward / nose / cockpit camera</b></td><td><span class="tag yes">Yes</span></td><td>The complete HUD: pitch ladder, horizon, bird, bank scale, tapes. This is the one place where every symbol is honest.</td></tr>
+    <tr><td><b>Gimbal (sensor) camera</b></td><td><span class="tag sub">Own overlay</span></td><td>A sensor overlay: centre reticle, gimbal azimuth and elevation, zoom or field of view, and a small strip with speed, altitude and heading. Real sensor displays work this way. The horizon and ladder are not drawn, because the camera is pointing somewhere else.</td></tr>
+    <tr><td><b>Rear / chase camera</b></td><td><span class="tag no">No</span></td><td>Nothing conformal. The bird would point behind the camera. If you want data here, use the same small strip as the gimbal view, or a corner attitude indicator.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><b>Recommendation:</b> make the HUD a module that is switched on only while the forward camera is active, and keep one shared data source (speed, altitude, attitude, path angle) that both the HUD and the small strip read from. Then no value is drawn twice on screen, and each view shows what is true for it.</p>
+
+<h3 style="margin-top:28px">Try it: why the bird cannot follow a turning camera</h3>
+<p>The bird is a direction in the world. The camera is a window pointed somewhere. Turn the camera away from the nose and watch the bird slide off the screen.</p>
+
+<div class="grid2" style="align-items:start">
+  <div class="card">
+    <div class="diagram" style="border:none;padding:0">
+      <svg id="camSvg" viewBox="0 0 300 260" role="img" aria-label="Top-down view: aircraft, camera view cone and velocity direction">
+        <circle cx="150" cy="150" r="110" fill="none" stroke="#2A3646" stroke-dasharray="3 5"/>
+        <path id="camCone" fill="rgba(77,232,244,.18)" stroke="#4DE8F4" stroke-width="1.5"/>
+        <line id="camVel" x1="150" y1="150" x2="150" y2="60" stroke="#FFB454" stroke-width="3" stroke-linecap="round"/>
+        <circle id="camVelDot" r="5" fill="#FFB454"/>
+        <polygon points="150,128 160,165 150,158 140,165" fill="#E5EBF3"/>
+        <text x="150" y="20" text-anchor="middle" fill="#9AA9BC" font-size="12">nose</text>
+        <text x="150" y="250" text-anchor="middle" fill="#9AA9BC" font-size="12">tail</text>
+        <text x="215" y="22" fill="#FFB454" font-size="12">● flight path</text>
+        <text x="215" y="38" fill="#4DE8F4" font-size="12">▲ camera view</text>
+      </svg>
+    </div>
+    <div class="screen" id="camScreen"><div class="mk" id="camMk"></div></div>
+    <div class="status" id="camStatus"></div>
+  </div>
+  <div>
+    <div class="row" id="camPresets"></div>
+    <div class="controls" id="camControls" style="grid-template-columns:1fr"></div>
+    <div class="eq">
+      <div class="name">Where a world direction lands on screen</div>
+      <math display="block" aria-label="y pixels equals H over two times tangent delta over tangent of FOV over two">
+        <msub><mi>y</mi><mi>px</mi></msub><mo>=</mo>
+        <mfrac><mi>H</mi><mn>2</mn></mfrac><mo>·</mo>
+        <mfrac><mrow><mi>tan</mi><mo>&#x2061;</mo><mi>Δ</mi></mrow><mrow><mi>tan</mi><mo>&#x2061;</mo><mo>(</mo><mfrac><msub><mi>FOV</mi><mi>v</mi></msub><mn>2</mn></mfrac><mo>)</mo></mrow></mfrac>
+      </math>
+      <p class="says"><b>Δ</b> is the angle between the camera axis and the direction you want to mark (the path, or a ladder rung). <b>H</b> is the screen height in pixels and <b>FOV<sub>v</sub></b> the camera's vertical field of view. If Δ reaches 90° or more, the direction is beside or behind the camera and the symbol must be hidden.</p>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:32px">Building it in Unity, step by step</h3>
+<ol>
+  <li>Make one UI group called <b>HUD</b> and attach it to the forward camera only. Switch it on and off with the camera, so the rear and gimbal views never show it.</li>
+  <li>Make the <b>tapes, heading strip and readouts</b> pure 2D. They need no projection at all, so they cost almost nothing per frame.</li>
+  <li>For the <b>bird</b>, take a point far ahead along the velocity: the aircraft position plus the normalised velocity times about 1000 metres. Convert it with the camera's <code>WorldToScreenPoint</code>. If the returned depth is negative, hide the symbol.</li>
+  <li>For the <b>pitch ladder</b>, use the same idea. Each rung is a world direction at a fixed elevation angle in front of the current heading. Project one point per rung. This keeps the ladder correct for any field of view, so you never have to tune pixel-per-degree by hand. Only rungs inside the window need to be shown.</li>
+  <li>Rotate the whole ladder group by the negative of the roll angle, and keep the fixed cross at the screen centre of the forward camera.</li>
+  <li>For the <b>gimbal view</b>, make a second small group: reticle, two angle readouts, the field of view, and the speed, altitude and heading strip.</li>
+</ol>
+<p>All of this is about ten to twenty projections per frame, so it is cheap even on a modest machine.</p>
+
+<p style="margin-top:48px;color:var(--muted);font-size:14px">Display layouts differ between aircraft (for example, some put the heading at the bottom). The numbers and symbols here follow the common arrangement of a classic fighter-style HUD, simplified for teaching.</p>
+</div>
+
+<script>
+/* starfield background */
+(function(){
+  var c=document.getElementById("stars"),x=c.getContext("2d");
+  function rnd(seed){return function(){seed=(seed*16807)%2147483647;return (seed-1)/2147483646}}
+  function draw(){
+    var w=c.width=window.innerWidth,h=c.height=window.innerHeight,r=rnd(48271);
+    x.fillStyle="#020204";x.fillRect(0,0,w,h);
+    var n=Math.round(w*h/1400),cols=["#ffffff","#cfe3ff","#ffe6c4","#ffd0b0","#bcd0ff"];
+    for(var i=0;i<n;i++){
+      var px=r()*w,py=r()*h,s=r(),rad=s>.985?2.2:(s>.9?1.3:.7);
+      x.globalAlpha=.35+r()*.65;x.fillStyle=cols[Math.floor(r()*cols.length)];
+      x.beginPath();x.arc(px,py,rad,0,6.2832);x.fill();
+    }
+    for(var g=0;g<14;g++){
+      var gx=r()*w,gy=r()*h,gs=3+r()*7,ang=r()*3.14;
+      x.save();x.translate(gx,gy);x.rotate(ang);x.globalAlpha=.55;
+      var gr=x.createRadialGradient(0,0,0,0,0,gs*2);
+      gr.addColorStop(0,r()>.5?"#ffd9a8":"#b9c8ff");gr.addColorStop(1,"rgba(0,0,0,0)");
+      x.fillStyle=gr;x.scale(1,.45+r()*.4);x.beginPath();x.arc(0,0,gs*2,0,6.2832);x.fill();x.restore();
+    }
+    x.globalAlpha=1;
+  }
+  draw();window.addEventListener("resize",draw);
+})();
+</script>
+<script>
+(function(){
+"use strict";
+var NS="http://www.w3.org/2000/svg";
+var CX=320, CY=225, K=7; /* pixels per degree in the HUD */
+var $=function(id){return document.getElementById(id)};
+function el(tag,attrs,parent){var e=document.createElementNS(NS,tag);for(var k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.appendChild(e);return e}
+function fx(n,d){return n.toFixed(d===undefined?0:d)}
+function sign(n,d){return (n>=0?"+":"−")+Math.abs(n).toFixed(d||0)}
+function wrap180(a){return ((a+540)%360)-180}
+function pad3(n){n=Math.round(((n%360)+360)%360);return ("00"+n).slice(-3)}
+function pad2(n){return ("0"+n).slice(-2)}
+
+/* ---------- parts text ---------- */
+var PARTS=[
+ {key:"hdg",name:"Heading tape",
+  what:"A strip of compass numbers that slides sideways. The caret under the strip marks the direction the nose points, shown in tens of degrees: 09 means 090°, due east.",
+  read:"Read the number at the caret. When you turn right the numbers slide left. Ticks are 5° apart and labels every 10°.",
+  why:"It lets you hold or capture a heading without looking down. It tells you where the nose points, which in wind is not the same as where you travel. Some aircraft put this strip at the bottom."},
+ {key:"roll",name:"Bank scale",
+  what:"A fixed arc with ticks at 10, 20, 30, 45 and 60 degrees each side, and a small triangle that slides along it.",
+  read:"The triangle moves toward the lowered wing. Pointer right of the top tick means right wing down. The horizon and ladder tilt the opposite way on the glass, so the bank is shown twice.",
+  why:"A quick, exact bank number. It tells you at a glance whether you are in a gentle 15° turn or a steep 60° one."},
+ {key:"ias",name:"Airspeed tape",
+  what:"A moving scale of speed in knots (nautical miles per hour). The box in the middle shows the current value, and bigger numbers are higher up.",
+  read:"Read the boxed number. If the tape slides down, you are speeding up. Watch for the stall speed below and the structural limit above.",
+  why:"Speed sets how much lift the wing can make and how hard the aircraft can turn. The demo treats indicated and true airspeed as the same, which is fine at low altitude."},
+ {key:"alt",name:"Altitude tape",
+  what:"A moving scale of height in feet. The boxed number is the current altitude and the ticks are 20 feet apart.",
+  read:"Read the boxed number. If the tape slides down you are climbing, because the numbers are going up. The fine tick spacing makes small changes easy to see.",
+  why:"Low-level flying needs small height changes to be visible at once. Real HUDs also show radar altitude (height above the ground) near the surface."},
+ {key:"ladder",name:"Pitch ladder",
+  what:"The set of short horizontal bars above and below the horizon line, one every 5 degrees, with numbers on the 10s. Bars above the horizon are solid. Bars below are dashed.",
+  read:"The bar ends bend toward the horizon, so even if you are upside down you know which way is up. Count bars between the fixed cross and the horizon line to get nose pitch.",
+  why:"It is conformal: a 10° bar sits exactly 10° above the real horizon as you see it through the glass. Pitch becomes something you see, not something you calculate."},
+ {key:"horizon",name:"Horizon line",
+  what:"The long bar with a gap in the middle. It is the zero-degree rung: it lies on the real horizon (over flat ground or sea).",
+  read:"Horizon above the cross means the nose is pointed down. Horizon below the cross means the nose is up. Horizon tilted means banked.",
+  why:"It is the reference for every other symbol and the first thing to check after a disturbance."},
+ {key:"bore",name:"Fixed cross (boresight)",
+  what:"A small cross that never moves on the glass. It marks the direction the aircraft's nose and centreline point.",
+  read:"Pitch is the angle from this cross to the horizon. Compare it with the bird: the gap between them is angle of attack.",
+  why:"In a fighter it is the gun and sensor aiming reference. In your simulator it is simply the camera and nose axis."},
+ {key:"fpv",name:"Flight path vector (the bird)",
+  what:"A small circle with wings and a fin. It is placed exactly where the aircraft is going, not where it points.",
+  read:"On the horizon means level flight. Above it means climbing. Put it on a spot on the ground and you will arrive at that spot (before any flare). Left or right of the cross means you drift sideways. Below the cross means the nose is above the path, which is angle of attack.",
+  why:"Pilots fly the path, not the nose. This one symbol answers the most important question, and it makes wind drift visible without any maths. Many pilots call it the most useful symbol on the display."},
+ {key:"data",name:"Side readouts",
+  what:"Mach number (M, speed compared with the speed of sound), G load (1.0 is normal gravity), angle of attack (α), and vertical speed (VS, feet per minute).",
+  read:"Each value appears once. G rises in turns and pull-ups. Vertical speed is the quickest way to check a descent rate on approach.",
+  why:"They are small numbers kept at the edge so that the centre of the glass stays clear for the outside view."}
+];
+var BYKEY={};PARTS.forEach(function(p,i){p.n=i+1;BYKEY[p.key]=p});
+/* legend numbering order: top-left to bottom-right feel */
+var order=["hdg","roll","ias","alt","ladder","horizon","bore","fpv","data"];
+order.forEach(function(k,i){BYKEY[k].n=i+1});
+
+/* ---------- state ---------- */
+var S={pitch:2.5,roll:0,ias:180,alt:1500,hdg:90,drift:0,vs:0,world:true,runway:false,badges:false,sel:"fpv"};
+var CTL=[
+ {k:"pitch",label:"Nose pitch θ",min:-25,max:25,step:.5,u:"°",d:1},
+ {k:"vs",label:"Vertical speed",min:-4000,max:4000,step:50,u:" ft/min",d:0},
+ {k:"roll",label:"Bank φ",min:-60,max:60,step:1,u:"°",d:0},
+ {k:"drift",label:"Drift β (track − heading)",min:-12,max:12,step:.5,u:"°",d:1},
+ {k:"ias",label:"Airspeed",min:60,max:350,step:5,u:" kt",d:0},
+ {k:"alt",label:"Altitude",min:0,max:8000,step:20,u:" ft",d:0},
+ {k:"hdg",label:"Heading ψ",min:0,max:359,step:1,u:"°",d:0}
+];
+var PRESETS=[
+ {name:"Level cruise",v:{pitch:2.5,roll:0,ias:180,alt:1500,hdg:90,drift:0,vs:0,runway:false}},
+ {name:"Climb",v:{pitch:12,roll:0,ias:140,alt:2000,hdg:90,drift:0,vs:2000,runway:false}},
+ {name:"Banked turn",v:{pitch:3.5,roll:-30,ias:200,alt:1500,hdg:270,drift:0,vs:0,runway:false}},
+ {name:"Final approach",v:{pitch:5,roll:0,ias:100,alt:300,hdg:0,drift:0,vs:-530,runway:true}},
+ {name:"Crosswind",v:{pitch:4,roll:0,ias:95,alt:300,hdg:5,drift:-5,vs:-530,runway:true}}
+];
+
+/* ---------- build static HUD pieces ---------- */
+var ladLines=$("ladLines");
+(function(){
+  for(var p=-90;p<=90;p+=5){
+    if(p===0)continue;
+    var y=-p*K, big=(p%10===0), outer=big?56:36, inner=16, hook=p>0?5:-5;
+    var attrs={"class":"hs"};if(p<0)attrs["stroke-dasharray"]="5 4";
+    var d="M"+(-outer)+" "+(y+hook)+" L"+(-outer)+" "+y+" L"+(-inner)+" "+y+" M"+outer+" "+(y+hook)+" L"+outer+" "+y+" L"+inner+" "+y;
+    attrs.d=d;el("path",attrs,ladLines);
+    if(big){
+      el("text",{"class":"ht",x:-outer-6,y:y+4,"text-anchor":"end","font-size":12},ladLines).textContent=Math.abs(p);
+      el("text",{"class":"ht",x:outer+6,y:y+4,"text-anchor":"start","font-size":12},ladLines).textContent=Math.abs(p);
+    }
+  }
+  el("path",{"class":"hs","stroke-width":2.4,d:"M-150 0 L-16 0 M16 0 L150 0"},ladLines);
+})();
+(function(){
+  var g=$("bankScale"),R=150;
+  function pt(t,r){var a=t*Math.PI/180;return [CX+r*Math.sin(a),CY-r*Math.cos(a)]}
+  var a1=pt(-60,R),a2=pt(60,R);
+  el("path",{"class":"hs",d:"M"+a1[0]+" "+a1[1]+" A"+R+" "+R+" 0 0 1 "+a2[0]+" "+a2[1],"stroke-width":1.2,opacity:.8},g);
+  $("rollHit").setAttribute("d","M"+a1[0]+" "+a1[1]+" A"+R+" "+R+" 0 0 1 "+a2[0]+" "+a2[1]);
+  [-60,-45,-30,-20,-10,0,10,20,30,45,60].forEach(function(t){
+    var big=(t===0||Math.abs(t)===30||Math.abs(t)===60);
+    var p=pt(t,R),q=pt(t,R+(big?13:8));
+    el("line",{"class":"hs",x1:p[0],y1:p[1],x2:q[0],y2:q[1],"stroke-width":big?2:1.3},g);
+  });
+})();
+/* badges */
+var BADGEPOS={hdg:[438,22],roll:[CX+118,100],ias:[46,142],alt:[596,142],ladder:[CX+96,CY-82],data:[46,306],bore:[CX-26,CY+34]};
+var badgeEls={};
+(function(){
+  var g=$("badges");
+  order.forEach(function(k){
+    var b=el("g",{"class":"badge"},g);
+    el("circle",{r:9},b);
+    el("text",{y:4},b).textContent=BYKEY[k].n;
+    badgeEls[k]=b;
+    if(BADGEPOS[k])b.setAttribute("transform","translate("+BADGEPOS[k][0]+" "+BADGEPOS[k][1]+")");
+  });
+})();
+
+/* ---------- controls ---------- */
+var ctlBox=$("controls");
+CTL.forEach(function(c){
+  var d=document.createElement("div");d.className="ctl";
+  d.innerHTML='<label for="c_'+c.k+'"><span>'+c.label+'</span><output id="o_'+c.k+'"></output></label>'+
+    '<input type="range" id="c_'+c.k+'" min="'+c.min+'" max="'+c.max+'" step="'+c.step+'" value="'+S[c.k]+'">';
+  ctlBox.appendChild(d);
+  d.querySelector("input").addEventListener("input",function(e){S[c.k]=parseFloat(e.target.value);render()});
+});
+var presetBox=$("presets");
+PRESETS.forEach(function(p){
+  var b=document.createElement("button");b.type="button";b.textContent=p.name;
+  b.addEventListener("click",function(){
+    for(var k in p.v)S[k]=p.v[k];
+    $("optRunway").checked=!!S.runway;
+    syncControls();render();
+  });
+  presetBox.appendChild(b);
+});
+function syncControls(){CTL.forEach(function(c){$("c_"+c.k).value=S[c.k]})}
+$("optBadges").addEventListener("change",function(e){S.badges=e.target.checked;render()});
+$("optWorld").addEventListener("change",function(e){S.world=e.target.checked;render()});
+$("optRunway").addEventListener("change",function(e){S.runway=e.target.checked;render()});
+
+/* legend + info */
+var legend=$("legend");
+order.forEach(function(k){
+  var p=BYKEY[k],b=document.createElement("button");b.type="button";b.dataset.part=k;
+  b.innerHTML='<span class="n">'+p.n+'</span><span>'+p.name+'</span>';
+  b.addEventListener("click",function(){select(k)});
+  legend.appendChild(b);
+});
+document.querySelectorAll("#hud .hit").forEach(function(h){
+  h.addEventListener("click",function(){select(h.getAttribute("data-part"))});
+});
+function select(k){
+  S.sel=k;var p=BYKEY[k];
+  $("info").innerHTML='<h3>'+p.n+'. '+p.name+'</h3><dl><dt>What it is</dt><dd>'+p.what+'</dd><dt>How to read it</dt><dd>'+p.read+'</dd><dt>Why it is there</dt><dd>'+p.why+'</dd></dl>';
+  document.querySelectorAll("#hud .hit").forEach(function(h){h.classList.toggle("sel",h.getAttribute("data-part")===k)});
+  legend.querySelectorAll("button").forEach(function(b){b.classList.toggle("on",b.dataset.part===k)});
+}
+
+/* ---------- physics helpers ---------- */
+function derived(){
+  var kt2fps=1.68781, V=S.ias*kt2fps, vfps=S.vs/60;
+  var ratio=Math.max(-1,Math.min(1,vfps/V));
+  var gam=Math.asin(ratio)*180/Math.PI;
+  var alpha=S.pitch-gam;
+  var phi=Math.abs(S.roll)*Math.PI/180;
+  var n=1/Math.cos(phi);
+  var Vms=S.ias*0.514444;
+  var omega=(9.80665*Math.tan(phi)/Vms)*180/Math.PI;
+  var h=S.alt*0.3048, T=288.15-0.0065*h, a=Math.sqrt(1.4*287.05*T);
+  var mach=Vms/a;
+  return {V:V,vfps:vfps,gam:gam,alpha:alpha,n:n,omega:omega,mach:mach};
+}
+
+/* ---------- render ---------- */
+function render(){
+  var D=derived();
+  CTL.forEach(function(c){
+    var v=S[c.k];var t=(c.k==="vs"||c.k==="pitch"||c.k==="drift"||c.k==="roll")?sign(v,c.d):fx(v,c.d);
+    if(c.k==="hdg")t=pad3(v);
+    $("o_"+c.k).textContent=t+c.u;
+  });
+  $("hudbox").classList.toggle("showbadges",S.badges);
+  /* badges class on svg container */
+  document.getElementById("hud").classList.toggle("showbadges",S.badges);
+
+  var a=-S.roll;
+  var rot="rotate("+a+" "+CX+" "+CY+")";
+  $("worldG").setAttribute("transform",rot+" translate("+CX+" "+(CY+S.pitch*K)+")");
+  $("ladG").setAttribute("transform",rot+" translate("+CX+" "+(CY+S.pitch*K)+")");
+  $("horHitG").setAttribute("transform",rot+" translate("+CX+" "+(CY+S.pitch*K)+")");
+  $("worldFill").style.display=S.world?"block":"none";
+  $("worldClip").style.display=S.world?"block":"none";
+  $("dim").style.display=S.world?"block":"none";
+  var dpsi=wrap180(0-S.hdg);
+  var rw=$("runway");
+  rw.style.display=(S.runway&&S.world&&Math.abs(dpsi)<35)?"block":"none";
+  rw.setAttribute("transform","translate("+(dpsi*K)+" "+(3*K)+")");
+  $("bankPtr").setAttribute("transform","rotate("+S.roll+" "+CX+" "+CY+")");
+
+  /* flight path vector */
+  var dx=S.drift*K, dy=(S.pitch-D.gam)*K, r=-S.roll*Math.PI/180;
+  var fxp=CX+dx*Math.cos(r)-dy*Math.sin(r), fyp=CY+dx*Math.sin(r)+dy*Math.cos(r);
+  $("fpv").setAttribute("transform","translate("+fxp+" "+fyp+")");
+  $("fpvHit").setAttribute("transform","translate("+fxp+" "+fyp+")");
+  var fb=badgeEls.fpv;
+  if(!fb){fb=badgeEls.fpv=el("g",{"class":"badge"},$("badges"));el("circle",{r:9},fb);el("text",{y:4},fb).textContent=BYKEY.fpv.n}
+  fb.setAttribute("transform","translate("+(fxp+22)+" "+(fyp-18)+")");
+  var hb=badgeEls.horizon;
+  if(!hb){hb=badgeEls.horizon=el("g",{"class":"badge"},$("badges"));el("circle",{r:9},hb);el("text",{y:4},hb).textContent=BYKEY.horizon.n}
+  var hx=-128, hy=-14;
+  var hxr=CX+hx*Math.cos(-S.roll*Math.PI/180)*1; /* placed in rotated frame */
+  var ang=-S.roll*Math.PI/180;
+  var lx=hx*Math.cos(ang)-(hy+S.pitch*K)*Math.sin(ang), ly=hx*Math.sin(ang)+(hy+S.pitch*K)*Math.cos(ang);
+  hb.setAttribute("transform","translate("+(CX+lx)+" "+(CY+ly)+")");
+
+  /* tapes */
+  var g=$("iasTape");g.innerHTML="";
+  for(var v=Math.max(0,Math.floor((S.ias-50)/10)*10);v<=S.ias+50;v+=10){
+    var y=CY-(v-S.ias)*1.6, major=(v%20===0);
+    el("line",{"class":"hs",x1:major?124:128,y1:y,x2:134,y2:y,"stroke-width":1.3},g);
+    if(major)el("text",{"class":"ht",x:118,y:y+4,"text-anchor":"end","font-size":12},g).textContent=v;
+  }
+  g=$("altTape");g.innerHTML="";
+  for(var h=Math.max(0,Math.floor((S.alt-190)/20)*20);h<=S.alt+190;h+=20){
+    var y2=CY-(h-S.alt)*0.4, maj=(h%100===0);
+    el("line",{"class":"hs",x1:506,y1:y2,x2:maj?516:512,y2:y2,"stroke-width":1.3},g);
+    if(maj)el("text",{"class":"ht",x:522,y:y2+4,"font-size":12},g).textContent=h;
+  }
+  g=$("hdgTape");g.innerHTML="";
+  for(var q=Math.floor((S.hdg-30)/5)*5;q<=S.hdg+30;q+=5){
+    var x=CX+(q-S.hdg)*4, mj=(((q%360)+360)%360)%10===0;
+    el("line",{"class":"hs",x1:x,y1:mj?30:34,x2:x,y2:40,"stroke-width":1.3},g);
+    if(mj)el("text",{"class":"ht",x:x,y:26,"text-anchor":"middle","font-size":12},g).textContent=pad2(Math.round((((q%360)+360)%360)/10)%36);
+  }
+  $("iasTxt").textContent=fx(S.ias);
+  $("altTxt").textContent=fx(S.alt);
+  $("hdgTxt").textContent=pad3(S.hdg);
+  $("rdMach").textContent="M "+fx(D.mach,2);
+  $("rdG").textContent="G "+fx(D.n,1);
+  $("rdAoa").textContent="α "+fx(D.alpha,1);
+  $("rdVs").textContent="VS "+(S.vs>=0?"+":"−")+Math.abs(Math.round(S.vs));
+
+  $("live").innerHTML=
+   'Live values<br>'+
+   'V = '+fx(S.ias)+' kt = '+fx(D.V,1)+' ft/s<br>'+
+   'γ = arcsin( '+fx(D.vfps,1)+' / '+fx(D.V,1)+' ) = <span>'+sign(D.gam,2)+'°</span><br>'+
+   'α ≈ θ − γ = '+fx(S.pitch,1)+' − ('+fx(D.gam,2)+') = <span>'+fx(D.alpha,1)+'°</span><br>'+
+   'β = '+sign(S.drift,1)+'° &nbsp;(track '+pad3(S.hdg+S.drift)+'°)<br>'+
+   'n = '+fx(D.n,2)+' G &nbsp; ω = '+fx(D.omega,1)+' °/s';
+}
+
+/* ---------- camera demo ---------- */
+var CAM={yaw:0,fov:60,drift:0};
+var CC=[
+ {k:"yaw",label:"Camera direction (0° = nose, 180° = tail)",min:-180,max:180,step:1,u:"°"},
+ {k:"fov",label:"Camera horizontal field of view",min:20,max:110,step:1,u:"°"},
+ {k:"drift",label:"Flight path drift from the nose",min:-25,max:25,step:1,u:"°"}
+];
+var cbox=$("camControls");
+CC.forEach(function(c){
+  var d=document.createElement("div");d.className="ctl";
+  d.innerHTML='<label for="k_'+c.k+'"><span>'+c.label+'</span><output id="ko_'+c.k+'"></output></label><input type="range" id="k_'+c.k+'" min="'+c.min+'" max="'+c.max+'" step="'+c.step+'" value="'+CAM[c.k]+'">';
+  cbox.appendChild(d);
+  d.querySelector("input").addEventListener("input",function(e){CAM[c.k]=parseFloat(e.target.value);renderCam()});
+});
+[{n:"Forward camera",v:{yaw:0,fov:60,drift:4}},{n:"Gimbal looking 40° right",v:{yaw:40,fov:30,drift:4}},{n:"Rear camera",v:{yaw:180,fov:70,drift:4}}].forEach(function(p){
+  var b=document.createElement("button");b.type="button";b.textContent=p.n;
+  b.addEventListener("click",function(){for(var k in p.v){CAM[k]=p.v[k];$("k_"+k).value=p.v[k]}renderCam()});
+  $("camPresets").appendChild(b);
+});
+function renderCam(){
+  CC.forEach(function(c){$("ko_"+c.k).textContent=CAM[c.k]+c.u});
+  var R=110,cx=150,cy=150,rad=Math.PI/180;
+  function pt(t,r){return [cx+r*Math.sin(t*rad),cy-r*Math.cos(t*rad)]}
+  var p1=pt(CAM.yaw-CAM.fov/2,R),p2=pt(CAM.yaw+CAM.fov/2,R);
+  $("camCone").setAttribute("d","M"+cx+" "+cy+" L"+p1[0]+" "+p1[1]+" A"+R+" "+R+" 0 0 1 "+p2[0]+" "+p2[1]+" Z");
+  var v=pt(CAM.drift,95);
+  $("camVel").setAttribute("x2",v[0]);$("camVel").setAttribute("y2",v[1]);
+  $("camVelDot").setAttribute("cx",v[0]);$("camVelDot").setAttribute("cy",v[1]);
+  var delta=wrap180(CAM.drift-CAM.yaw), mk=$("camMk"), st=$("camStatus");
+  if(Math.abs(delta)>=90){
+    mk.style.display="none";
+    st.textContent="Δ = "+sign(delta,0)+"°. The path is beside or behind the camera. Hide the symbol.";
+  }else{
+    var xn=Math.tan(delta*rad)/Math.tan(CAM.fov/2*rad);
+    if(Math.abs(xn)<=1){
+      mk.style.display="block";mk.style.left=(50+xn*50)+"%";
+      st.textContent="Δ = "+sign(delta,0)+"°. On screen, "+fx(Math.abs(xn)*100)+"% of the way to the "+(xn<0?"left":"right")+" edge.";
+    }else{
+      mk.style.display="none";
+      st.textContent="Δ = "+sign(delta,0)+"°. Off screen to the "+(xn<0?"left":"right")+". The camera sees only ±"+fx(CAM.fov/2)+"° around its axis.";
+    }
+  }
+}
+
+syncControls();select("fpv");render();renderCam();
+})();
+</script>
+</body>
+</html>
